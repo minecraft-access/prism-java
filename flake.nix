@@ -18,9 +18,11 @@
                         jetbrains.jdk
                         git
                         maven
+                        jextract
                     ];
 
                     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
+                    C_INCLUDE_PATH = "${pkgs.stdenv.cc.libc.dev}/include";
                     JAVA_HOME = pkgs.jetbrains.jdk;
                 };
             }
