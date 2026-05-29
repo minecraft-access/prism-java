@@ -11,7 +11,7 @@
 
     <name>PRISM</name>
     <description>Java bindings for PRISM.</description>
-    <url>https://github.com/minecraft-access/prism</url>
+    <url>https://github.com/minecraft-access/prism-java</url>
     <inceptionYear>2026</inceptionYear>
     <licenses>
         <license>
@@ -37,16 +37,16 @@
     </developers>
     <issueManagement>
         <system>GitHub</system>
-        <url>https://github.com/minecraft-access/prism/issues</url>
+        <url>https://github.com/minecraft-access/prism-java/issues</url>
     </issueManagement>
     <ciManagement>
         <system>GitHub Actions</system>
-        <url>https://github.com/minecraft-access/prism/actions</url>
+        <url>https://github.com/minecraft-access/prism-java/actions</url>
     </ciManagement>
     <scm>
-        <connection>scm:git:https://github.com/minecraft-access/prism</connection>
-        <developerConnection>scm:git:git@github.com:minecraft-access/prism</developerConnection>
-        <url>https://github.com/minecraft-access/prism</url>
+        <connection>scm:git:https://github.com/minecraft-access/prism-java</connection>
+        <developerConnection>scm:git:git@github.com:minecraft-access/prism-java</developerConnection>
+        <url>https://github.com/minecraft-access/prism-java</url>
     </scm>
 
     <properties>
