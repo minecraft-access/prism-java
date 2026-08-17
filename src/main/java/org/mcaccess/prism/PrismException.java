@@ -1,17 +1,26 @@
 package org.mcaccess.prism;
 
+import org.mcaccess.prism.natives.NativeLoader;
 import org.mcaccess.prism.natives.prism_h;
 
+import java.lang.foreign.MemorySegment;
+
 public sealed class PrismException extends RuntimeException {
-    private PrismException(String message) {
+    public PrismException(String message) {
         super(message);
     }
 
-    static void throwIfError(int result) {
+    public static void throwIfError(int result) {
         if (result == prism_h.PRISM_OK()) {
             return;
         }
-        String message = prism_h.prism_error_string(result).getString(0);
+        NativeLoader.load();
+        MemorySegment msgPtr = prism_h.prism_error_string(result);
+        String message = Backend.readCString(msgPtr);
+        if (message.isEmpty()) {
+            message = "Unknown PRISM error (code " + result + ")";
+        }
+
         throw switch (result) {
             case 1 -> new NotInitialized(message);
             case 2 -> new InvalidParam(message);
@@ -33,6 +42,9 @@ public sealed class PrismException extends RuntimeException {
             case 18 -> new InvalidAudioFormat(message);
             case 19 -> new InternalBackendLimitExceeded(message);
             case 20 -> new BackendEnteredUndefinedState(message);
+            case 21 -> new LibraryLoadFailed(message);
+            case 22 -> new LibraryInvalid(message);
+            case 23 -> new IncompatibleAbi(message);
             default -> new PrismException(message);
         };
     }
@@ -41,7 +53,7 @@ public sealed class PrismException extends RuntimeException {
      * The backend was not initialized; {@code prism_backend_initialize} was not called or failed.
      */
     public static final class NotInitialized extends PrismException {
-        private NotInitialized(String message) {
+        public NotInitialized(String message) {
             super(message);
         }
     }
@@ -50,7 +62,7 @@ public sealed class PrismException extends RuntimeException {
      * An invalid parameter was passed to a function.
      */
     public static final class InvalidParam extends PrismException {
-        private InvalidParam(String message) {
+        public InvalidParam(String message) {
             super(message);
         }
     }
@@ -59,7 +71,7 @@ public sealed class PrismException extends RuntimeException {
      * The operation is not supported by the selected backend.
      */
     public static final class NotImplemented extends PrismException {
-        private NotImplemented(String message) {
+        public NotImplemented(String message) {
             super(message);
         }
     }
@@ -68,7 +80,7 @@ public sealed class PrismException extends RuntimeException {
      * No voices are available for this backend.
      */
     public static final class NoVoices extends PrismException {
-        private NoVoices(String message) {
+        public NoVoices(String message) {
             super(message);
         }
     }
@@ -77,7 +89,7 @@ public sealed class PrismException extends RuntimeException {
      * The specified voice was not found.
      */
     public static final class VoiceNotFound extends PrismException {
-        private VoiceNotFound(String message) {
+        public VoiceNotFound(String message) {
             super(message);
         }
     }
@@ -86,7 +98,7 @@ public sealed class PrismException extends RuntimeException {
      * Speech synthesis failed.
      */
     public static final class SpeakFailure extends PrismException {
-        private SpeakFailure(String message) {
+        public SpeakFailure(String message) {
             super(message);
         }
     }
@@ -95,7 +107,7 @@ public sealed class PrismException extends RuntimeException {
      * Memory allocation failed.
      */
     public static final class MemoryFailure extends PrismException {
-        private MemoryFailure(String message) {
+        public MemoryFailure(String message) {
             super(message);
         }
     }
@@ -104,7 +116,7 @@ public sealed class PrismException extends RuntimeException {
      * A parameter value exceeded its valid range.
      */
     public static final class RangeOutOfBounds extends PrismException {
-        private RangeOutOfBounds(String message) {
+        public RangeOutOfBounds(String message) {
             super(message);
         }
     }
@@ -113,7 +125,7 @@ public sealed class PrismException extends RuntimeException {
      * An internal backend error occurred.
      */
     public static final class Internal extends PrismException {
-        private Internal(String message) {
+        public Internal(String message) {
             super(message);
         }
     }
@@ -122,7 +134,7 @@ public sealed class PrismException extends RuntimeException {
      * Attempted to stop or pause when not speaking.
      */
     public static final class NotSpeaking extends PrismException {
-        private NotSpeaking(String message) {
+        public NotSpeaking(String message) {
             super(message);
         }
     }
@@ -131,7 +143,7 @@ public sealed class PrismException extends RuntimeException {
      * Attempted to resume when not paused.
      */
     public static final class NotPaused extends PrismException {
-        private NotPaused(String message) {
+        public NotPaused(String message) {
             super(message);
         }
     }
@@ -140,7 +152,7 @@ public sealed class PrismException extends RuntimeException {
      * Attempted to pause when already paused.
      */
     public static final class AlreadyPaused extends PrismException {
-        private AlreadyPaused(String message) {
+        public AlreadyPaused(String message) {
             super(message);
         }
     }
@@ -149,7 +161,7 @@ public sealed class PrismException extends RuntimeException {
      * A string parameter contained invalid UTF-8.
      */
     public static final class InvalidUtf8 extends PrismException {
-        private InvalidUtf8(String message) {
+        public InvalidUtf8(String message) {
             super(message);
         }
     }
@@ -158,7 +170,7 @@ public sealed class PrismException extends RuntimeException {
      * The operation is invalid in the current state.
      */
     public static final class InvalidOperation extends PrismException {
-        private InvalidOperation(String message) {
+        public InvalidOperation(String message) {
             super(message);
         }
     }
@@ -167,7 +179,7 @@ public sealed class PrismException extends RuntimeException {
      * Attempted to initialize an already-initialized backend.
      */
     public static final class AlreadyInitialized extends PrismException {
-        private AlreadyInitialized(String message) {
+        public AlreadyInitialized(String message) {
             super(message);
         }
     }
@@ -176,7 +188,7 @@ public sealed class PrismException extends RuntimeException {
      * The backend is not available on this system.
      */
     public static final class BackendNotAvailable extends PrismException {
-        private BackendNotAvailable(String message) {
+        public BackendNotAvailable(String message) {
             super(message);
         }
     }
@@ -185,7 +197,7 @@ public sealed class PrismException extends RuntimeException {
      * An unspecified error occurred.
      */
     public static final class Unknown extends PrismException {
-        private Unknown(String message) {
+        public Unknown(String message) {
             super(message);
         }
     }
@@ -195,7 +207,7 @@ public sealed class PrismException extends RuntimeException {
      * or the parameters that the underlying speech engine provided to Prism were nonsensical.
      */
     public static final class InvalidAudioFormat extends PrismException {
-        private InvalidAudioFormat(String message) {
+        public InvalidAudioFormat(String message) {
             super(message);
         }
     }
@@ -205,7 +217,7 @@ public sealed class PrismException extends RuntimeException {
      * and this limit would be exceeded were another to be initialized.
      */
     public static final class InternalBackendLimitExceeded extends PrismException {
-        private InternalBackendLimitExceeded(String message) {
+        public InternalBackendLimitExceeded(String message) {
             super(message);
         }
     }
@@ -215,7 +227,34 @@ public sealed class PrismException extends RuntimeException {
      * The caller should re-initialize the backend from scratch.
      */
     public static final class BackendEnteredUndefinedState extends PrismException {
-        private BackendEnteredUndefinedState(String message) {
+        public BackendEnteredUndefinedState(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Failed to load a native plugin library.
+     */
+    public static final class LibraryLoadFailed extends PrismException {
+        public LibraryLoadFailed(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * A native plugin library is invalid or missing required symbols.
+     */
+    public static final class LibraryInvalid extends PrismException {
+        public LibraryInvalid(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * A native plugin has an incompatible ABI version.
+     */
+    public static final class IncompatibleAbi extends PrismException {
+        public IncompatibleAbi(String message) {
             super(message);
         }
     }

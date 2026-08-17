@@ -7,7 +7,7 @@
 
     <groupId>org.mcaccess</groupId>
     <artifactId>prism</artifactId>
-    <version>0.16.3</version>
+    <version>0.17.3</version>
 
     <name>PRISM</name>
     <description>Java bindings for PRISM.</description>
@@ -52,7 +52,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.build.outputTimestamp>${maven.build.timestamp}</project.build.outputTimestamp>
-        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.release>25</maven.compiler.release>
         <prism>${project.build.directory}/prism-sdk-v${project.version}</prism>
     </properties>
 
@@ -113,7 +113,7 @@
                         <configuration>
                             <url>https://github.com/ethindp/prism/releases/download/v${project.version}/prism-sdk-v${project.version}.zip</url>
                             <unpack>true</unpack>
-                            <sha256>d4ae9efbc7e99749b904282862d34e4e55c3668cdff03948b48d280d86e2fde0</sha256>
+                            <sha256>6273c126fc35a300b2d76685383d8556fc9c822a0b26682558c32ce28f914364</sha256>
                         </configuration>
                     </execution>
                 </executions>
@@ -150,6 +150,7 @@
                                     <targetPath>windows/amd64</targetPath>
                                     <includes>
                                         <include>prism.dll</include>
+                                        <include>tolk.dll</include>
                                     </includes>
                                 </resource>
                                 <resource>
@@ -157,6 +158,7 @@
                                     <targetPath>windows/aarch64</targetPath>
                                     <includes>
                                         <include>prism.dll</include>
+                                        <include>tolk.dll</include>
                                     </includes>
                                 </resource>
                                 <resource>
@@ -184,6 +186,9 @@
                         <configuration>
                             <executable>jextract</executable>
                             <arguments>
+                                <argument>@${project.basedir}/jextract.args</argument>
+                                <argument>--header-class-name</argument>
+                                <argument>prism_h</argument>
                                 <argument>--output</argument>
                                 <argument>${project.build.directory}/generated-sources/jextract</argument>
                                 <argument>--target-package</argument>
@@ -194,6 +199,47 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.build.directory}/generated-sources/jextract</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.3</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 </project>

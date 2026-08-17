@@ -3,5 +3,7 @@
  *
  * @see <a href="https://github.com/ethindp/prism">PRISM</a>
  */
-module prism {
+module org.mcaccess.prism {
+    exports org.mcaccess.prism;
+    exports org.mcaccess.prism.natives;
 }
