@@ -81,16 +81,6 @@ public final class NativeLoader {
     private static void loadWindows(String arch) throws IOException {
         Path tempDir = getTempDir();
         String resourceDir = "/natives/windows/" + arch + "/";
-
-        // Try extracting and loading tolk.dll first if present
-        Path tolkPath = extractResource(resourceDir + "tolk.dll", tempDir.resolve("tolk.dll"));
-        if (tolkPath != null) {
-            try {
-                System.load(tolkPath.toAbsolutePath().toString());
-            } catch (Throwable ignored) {
-            }
-        }
-
         Path prismPath = extractResource(resourceDir + "prism.dll", tempDir.resolve("prism.dll"));
         if (prismPath != null) {
             System.load(prismPath.toAbsolutePath().toString());

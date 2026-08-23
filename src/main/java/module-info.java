@@ -5,5 +5,5 @@
  */
 module org.mcaccess.prism {
     exports org.mcaccess.prism;
-    exports org.mcaccess.prism.natives;
 }
+

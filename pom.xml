@@ -150,7 +150,6 @@
                                     <targetPath>windows/amd64</targetPath>
                                     <includes>
                                         <include>prism.dll</include>
-                                        <include>tolk.dll</include>
                                     </includes>
                                 </resource>
                                 <resource>
@@ -158,7 +157,6 @@
                                     <targetPath>windows/aarch64</targetPath>
                                     <includes>
                                         <include>prism.dll</include>
-                                        <include>tolk.dll</include>
                                     </includes>
                                 </resource>
                                 <resource>
