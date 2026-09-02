@@ -65,4 +65,11 @@ public final class Prism {
             return false;
         }
     }
+
+    /**
+     * @return the load failure or {@code null}
+     */
+    public static Throwable getLoadFailure() {
+        return NativeLoader.getLoadFailure();
+    }
 }

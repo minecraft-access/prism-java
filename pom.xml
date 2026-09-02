@@ -7,7 +7,7 @@
 
     <groupId>org.mcaccess</groupId>
     <artifactId>prism</artifactId>
-    <version>0.17.3</version>
+    <version>0.18.2</version>
 
     <name>PRISM</name>
     <description>Java bindings for PRISM.</description>
@@ -113,7 +113,7 @@
                         <configuration>
                             <url>https://github.com/ethindp/prism/releases/download/v${project.version}/prism-sdk-v${project.version}.zip</url>
                             <unpack>true</unpack>
-                            <sha256>6273c126fc35a300b2d76685383d8556fc9c822a0b26682558c32ce28f914364</sha256>
+                            <sha256>e4e5634aeaeddd3ffca527d8b99c27cbc0b51c806f7876ab27dbee335bded9ab</sha256>
                         </configuration>
                     </execution>
                 </executions>
@@ -123,6 +123,22 @@
                 <artifactId>maven-resources-plugin</artifactId>
                 <version>3.3.1</version>
                 <executions>
+                    <execution>
+                        <id>generate-build-info</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/generated-sources/version</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/java-templates</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
                     <execution>
                         <phase>generate-resources</phase>
                         <goals>
@@ -191,6 +207,8 @@
                                 <argument>${project.build.directory}/generated-sources/jextract</argument>
                                 <argument>--target-package</argument>
                                 <argument>org.mcaccess.prism.natives</argument>
+                                <argument>-I</argument>
+                                <argument>${prism}/include</argument>
                                 <argument>${prism}/include/prism.h</argument>
                             </arguments>
                         </configuration>
@@ -210,6 +228,7 @@
                         <configuration>
                             <sources>
                                 <source>${project.build.directory}/generated-sources/jextract</source>
+                                <source>${project.build.directory}/generated-sources/version</source>
                             </sources>
                         </configuration>
                     </execution>
