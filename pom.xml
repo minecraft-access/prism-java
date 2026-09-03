@@ -221,6 +221,10 @@
                 <version>3.5.2</version>
                 <configuration>
                     <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                    <!--
+                        One JVM per test class. Shutting down a context that was configured with an availability callback leaves PRISM unable to create backends afterwards, which crashes any later test in the same process. Forking per class keeps the availability tests from poisoning the rest.
+                    -->
+                    <reuseForks>false</reuseForks>
                 </configuration>
             </plugin>
         </plugins>

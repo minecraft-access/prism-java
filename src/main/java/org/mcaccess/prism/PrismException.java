@@ -21,32 +21,7 @@ public sealed class PrismException extends RuntimeException {
             message = "Unknown PRISM error (code " + result + ")";
         }
 
-        throw switch (result) {
-            case 1 -> new NotInitialized(message);
-            case 2 -> new InvalidParam(message);
-            case 3 -> new NotImplemented(message);
-            case 4 -> new NoVoices(message);
-            case 5 -> new VoiceNotFound(message);
-            case 6 -> new SpeakFailure(message);
-            case 7 -> new MemoryFailure(message);
-            case 8 -> new RangeOutOfBounds(message);
-            case 9 -> new Internal(message);
-            case 10 -> new NotSpeaking(message);
-            case 11 -> new NotPaused(message);
-            case 12 -> new AlreadyPaused(message);
-            case 13 -> new InvalidUtf8(message);
-            case 14 -> new InvalidOperation(message);
-            case 15 -> new AlreadyInitialized(message);
-            case 16 -> new BackendNotAvailable(message);
-            case 17 -> new Unknown(message);
-            case 18 -> new InvalidAudioFormat(message);
-            case 19 -> new InternalBackendLimitExceeded(message);
-            case 20 -> new BackendEnteredUndefinedState(message);
-            case 21 -> new LibraryLoadFailed(message);
-            case 22 -> new LibraryInvalid(message);
-            case 23 -> new IncompatibleAbi(message);
-            default -> new PrismException(message);
-        };
+        throw PrismError.fromCode(result).newException(message);
     }
 
     /**

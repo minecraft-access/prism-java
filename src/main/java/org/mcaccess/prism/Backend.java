@@ -8,27 +8,54 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Function;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
+
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BOOLEAN;
+import static java.lang.foreign.ValueLayout.JAVA_FLOAT;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /**
  * Represents an active PRISM speech or screen reader backend instance.
  */
 public final class Backend implements AutoCloseable {
+    /**
+     * the locks use the native instance identity. Keying by address can result in returning new handles to the same cached instance and as the docs state, a backend instance is not thread-safe even for logically independent calls.
+     * Only created instance key by address.
+     */
+    private static final ConcurrentMap<Object, Object> LOCKS = new ConcurrentHashMap<>();
+
+    @FunctionalInterface
+    private interface OutCall {
+        int invoke(MemorySegment out);
+    }
+
+    @FunctionalInterface
+    private interface TextCall {
+        int invoke(Arena arena, MemorySegment text);
+    }
+
     private final MemorySegment handle;
-    private final boolean owned;
+    private final Object lock;
     private volatile boolean closed = false;
 
-    Backend(MemorySegment handle, boolean owned) {
-        Objects.requireNonNull(handle, "Backend handle must not be null");
-        if (handle.equals(MemorySegment.NULL)) {
+    Backend(MemorySegment handle, Object lockKey) {
+        if (handle.address() == 0) {
             throw new IllegalArgumentException("Backend handle must not be NULL");
         }
         NativeLoader.load();
         this.handle = handle;
-        this.owned = owned;
+        this.lock = LOCKS.computeIfAbsent(lockKey, k -> new Object());
 
-        int res = prism_h.prism_backend_initialize(handle);
-        if (res != prism_h.PRISM_OK() && res != prism_h.PRISM_ERROR_ALREADY_INITIALIZED()) {
-            PrismException.throwIfError(res);
+        synchronized (lock) {
+            int res = prism_h.prism_backend_initialize(handle);
+            if (res != prism_h.PRISM_OK() && res != prism_h.PRISM_ERROR_ALREADY_INITIALIZED()) {
+                PrismException.throwIfError(res);
+            }
         }
     }
 
@@ -48,20 +75,16 @@ public final class Backend implements AutoCloseable {
      * @return backend name
      */
     public String getName() {
-        checkClosed();
-        MemorySegment namePtr = prism_h.prism_backend_name(handle);
-        return readCString(namePtr);
+        return locked(() -> readCString(prism_h.prism_backend_name(handle)));
     }
 
     /**
      * Gets the feature flags supported by this backend.
      *
-     * @return backend features
+     * @return the raw feature bitmask; decode it with {@link BackendFeature}
      */
-    public BackendFeatures getFeatures() {
-        checkClosed();
-        long features = prism_h.prism_backend_get_features(handle);
-        return BackendFeatures.fromBits(features);
+    public long getFeatures() {
+        return locked(() -> prism_h.prism_backend_get_features(handle));
     }
 
     /**
@@ -71,13 +94,7 @@ public final class Backend implements AutoCloseable {
      * @param interrupt whether to interrupt ongoing speech
      */
     public void speak(String text, boolean interrupt) {
-        checkClosed();
-        validateText(text);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment textSeg = arena.allocateFrom(text);
-            int res = prism_h.prism_backend_speak(handle, textSeg, interrupt);
-            PrismException.throwIfError(res);
-        }
+        callWithText(text, (arena, seg) -> prism_h.prism_backend_speak(handle, seg, interrupt));
     }
 
     /**
@@ -96,27 +113,18 @@ public final class Backend implements AutoCloseable {
      * @param callback consumer called with audio sample data
      */
     public void speakToMemory(String text, AudioCallback callback) {
-        checkClosed();
-        validateText(text);
         Objects.requireNonNull(callback, "callback must not be null");
-
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment textSeg = arena.allocateFrom(text);
-
-            PrismAudioCallback.Function callbackFunc = (userdata, samplesPtr, sampleCount, channels, sampleRate) -> {
-                int count = (int) sampleCount;
-                float[] samples = new float[count];
-                if (count > 0 && samplesPtr != null && !samplesPtr.equals(MemorySegment.NULL)) {
-                    MemorySegment sizedPtr = samplesPtr.reinterpret((long) count * Float.BYTES);
-                    MemorySegment.copy(sizedPtr, ValueLayout.JAVA_FLOAT, 0, samples, 0, count);
-                }
-                callback.onAudioData(samples, (int) channels, (int) sampleRate);
-            };
-
-            MemorySegment callbackStub = PrismAudioCallback.allocate(callbackFunc, arena);
-            int res = prism_h.prism_backend_speak_to_memory(handle, textSeg, callbackStub, MemorySegment.NULL);
-            PrismException.throwIfError(res);
-        }
+        PrismAudioCallback.Function onAudio = (userdata, samplesPtr, sampleCount, channels, sampleRate) -> {
+            int count = (int) sampleCount;
+            float[] samples = new float[count];
+            if (count > 0 && samplesPtr.address() != 0) {
+                MemorySegment sized = samplesPtr.reinterpret((long) count * Float.BYTES);
+                MemorySegment.copy(sized, JAVA_FLOAT, 0, samples, 0, count);
+            }
+            callback.onAudioData(samples, (int) channels, (int) sampleRate);
+        };
+        callWithText(text, (arena, seg) -> prism_h.prism_backend_speak_to_memory(
+                handle, seg, PrismAudioCallback.allocate(onAudio, arena), MemorySegment.NULL));
     }
 
     /**
@@ -125,13 +133,7 @@ public final class Backend implements AutoCloseable {
      * @param text the text to display in Braille
      */
     public void braille(String text) {
-        checkClosed();
-        validateText(text);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment textSeg = arena.allocateFrom(text);
-            int res = prism_h.prism_backend_braille(handle, textSeg);
-            PrismException.throwIfError(res);
-        }
+        callWithText(text, (arena, seg) -> prism_h.prism_backend_braille(handle, seg));
     }
 
     /**
@@ -141,13 +143,7 @@ public final class Backend implements AutoCloseable {
      * @param interrupt whether to interrupt ongoing speech
      */
     public void output(String text, boolean interrupt) {
-        checkClosed();
-        validateText(text);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment textSeg = arena.allocateFrom(text);
-            int res = prism_h.prism_backend_output(handle, textSeg, interrupt);
-            PrismException.throwIfError(res);
-        }
+        callWithText(text, (arena, seg) -> prism_h.prism_backend_output(handle, seg, interrupt));
     }
 
     /**
@@ -163,27 +159,21 @@ public final class Backend implements AutoCloseable {
      * Stops current speech output immediately.
      */
     public void stop() {
-        checkClosed();
-        int res = prism_h.prism_backend_stop(handle);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_stop(handle));
     }
 
     /**
      * Pauses ongoing speech synthesis and playback.
      */
     public void pause() {
-        checkClosed();
-        int res = prism_h.prism_backend_pause(handle);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_pause(handle));
     }
 
     /**
      * Resumes paused speech playback.
      */
     public void resume() {
-        checkClosed();
-        int res = prism_h.prism_backend_resume(handle);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_resume(handle));
     }
 
     /**
@@ -192,13 +182,7 @@ public final class Backend implements AutoCloseable {
      * @return {@code true} if speaking, {@code false} otherwise
      */
     public boolean isSpeaking() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outSpeaking = arena.allocate(ValueLayout.JAVA_BOOLEAN);
-            int res = prism_h.prism_backend_is_speaking(handle, outSpeaking);
-            PrismException.throwIfError(res);
-            return outSpeaking.get(ValueLayout.JAVA_BOOLEAN, 0);
-        }
+        return queryBoolean(out -> prism_h.prism_backend_is_speaking(handle, out));
     }
 
     /**
@@ -207,12 +191,10 @@ public final class Backend implements AutoCloseable {
      * @param volume volume level between 0.0 and 1.0
      */
     public void setVolume(float volume) {
-        checkClosed();
         if (volume < 0.0f || volume > 1.0f) {
             throw new PrismException.RangeOutOfBounds("Volume must be between 0.0 and 1.0");
         }
-        int res = prism_h.prism_backend_set_volume(handle, volume);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_set_volume(handle, volume));
     }
 
     /**
@@ -221,13 +203,7 @@ public final class Backend implements AutoCloseable {
      * @return current volume between 0.0 and 1.0
      */
     public float getVolume() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outVolume = arena.allocate(ValueLayout.JAVA_FLOAT);
-            int res = prism_h.prism_backend_get_volume(handle, outVolume);
-            PrismException.throwIfError(res);
-            return outVolume.get(ValueLayout.JAVA_FLOAT, 0);
-        }
+        return queryFloat(out -> prism_h.prism_backend_get_volume(handle, out));
     }
 
     /**
@@ -236,12 +212,10 @@ public final class Backend implements AutoCloseable {
      * @param rate speech rate multiplier (e.g. 1.0 is normal rate)
      */
     public void setRate(float rate) {
-        checkClosed();
         if (rate < 0.0f) {
             throw new PrismException.RangeOutOfBounds("Rate must be non-negative");
         }
-        int res = prism_h.prism_backend_set_rate(handle, rate);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_set_rate(handle, rate));
     }
 
     /**
@@ -250,13 +224,7 @@ public final class Backend implements AutoCloseable {
      * @return current speech rate
      */
     public float getRate() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outRate = arena.allocate(ValueLayout.JAVA_FLOAT);
-            int res = prism_h.prism_backend_get_rate(handle, outRate);
-            PrismException.throwIfError(res);
-            return outRate.get(ValueLayout.JAVA_FLOAT, 0);
-        }
+        return queryFloat(out -> prism_h.prism_backend_get_rate(handle, out));
     }
 
     /**
@@ -265,12 +233,10 @@ public final class Backend implements AutoCloseable {
      * @param pitch speech pitch multiplier (e.g. 1.0 is normal pitch)
      */
     public void setPitch(float pitch) {
-        checkClosed();
         if (pitch < 0.0f) {
             throw new PrismException.RangeOutOfBounds("Pitch must be non-negative");
         }
-        int res = prism_h.prism_backend_set_pitch(handle, pitch);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_set_pitch(handle, pitch));
     }
 
     /**
@@ -279,22 +245,14 @@ public final class Backend implements AutoCloseable {
      * @return current speech pitch
      */
     public float getPitch() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outPitch = arena.allocate(ValueLayout.JAVA_FLOAT);
-            int res = prism_h.prism_backend_get_pitch(handle, outPitch);
-            PrismException.throwIfError(res);
-            return outPitch.get(ValueLayout.JAVA_FLOAT, 0);
-        }
+        return queryFloat(out -> prism_h.prism_backend_get_pitch(handle, out));
     }
 
     /**
      * Refreshes the list of available voices.
      */
     public void refreshVoices() {
-        checkClosed();
-        int res = prism_h.prism_backend_refresh_voices(handle);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_refresh_voices(handle));
     }
 
     /**
@@ -303,13 +261,7 @@ public final class Backend implements AutoCloseable {
      * @return number of voices
      */
     public int getVoicesCount() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outCount = arena.allocate(ValueLayout.JAVA_LONG);
-            int res = prism_h.prism_backend_count_voices(handle, outCount);
-            PrismException.throwIfError(res);
-            return (int) outCount.get(ValueLayout.JAVA_LONG, 0);
-        }
+        return (int) queryLong(out -> prism_h.prism_backend_count_voices(handle, out));
     }
 
     /**
@@ -319,14 +271,7 @@ public final class Backend implements AutoCloseable {
      * @return voice name
      */
     public String getVoiceName(int voiceIndex) {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outName = arena.allocate(ValueLayout.ADDRESS);
-            int res = prism_h.prism_backend_get_voice_name(handle, voiceIndex, outName);
-            PrismException.throwIfError(res);
-            MemorySegment ptr = outName.get(ValueLayout.ADDRESS, 0);
-            return readCString(ptr);
-        }
+        return queryString(out -> prism_h.prism_backend_get_voice_name(handle, voiceIndex, out));
     }
 
     /**
@@ -336,14 +281,7 @@ public final class Backend implements AutoCloseable {
      * @return voice language code (e.g. "en-US")
      */
     public String getVoiceLanguage(int voiceIndex) {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outLang = arena.allocate(ValueLayout.ADDRESS);
-            int res = prism_h.prism_backend_get_voice_language(handle, voiceIndex, outLang);
-            PrismException.throwIfError(res);
-            MemorySegment ptr = outLang.get(ValueLayout.ADDRESS, 0);
-            return readCString(ptr);
-        }
+        return queryString(out -> prism_h.prism_backend_get_voice_language(handle, voiceIndex, out));
     }
 
     /**
@@ -352,9 +290,7 @@ public final class Backend implements AutoCloseable {
      * @param voiceIndex 0-based voice index
      */
     public void setVoice(int voiceIndex) {
-        checkClosed();
-        int res = prism_h.prism_backend_set_voice(handle, voiceIndex);
-        PrismException.throwIfError(res);
+        call(() -> prism_h.prism_backend_set_voice(handle, voiceIndex));
     }
 
     /**
@@ -363,13 +299,7 @@ public final class Backend implements AutoCloseable {
      * @return active voice index
      */
     public int getVoice() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outVoice = arena.allocate(ValueLayout.JAVA_LONG);
-            int res = prism_h.prism_backend_get_voice(handle, outVoice);
-            PrismException.throwIfError(res);
-            return (int) outVoice.get(ValueLayout.JAVA_LONG, 0);
-        }
+        return (int) queryLong(out -> prism_h.prism_backend_get_voice(handle, out));
     }
 
     /**
@@ -378,13 +308,7 @@ public final class Backend implements AutoCloseable {
      * @return channel count (1 for mono, 2 for stereo)
      */
     public int getChannels() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outChannels = arena.allocate(ValueLayout.JAVA_LONG);
-            int res = prism_h.prism_backend_get_channels(handle, outChannels);
-            PrismException.throwIfError(res);
-            return (int) outChannels.get(ValueLayout.JAVA_LONG, 0);
-        }
+        return (int) queryLong(out -> prism_h.prism_backend_get_channels(handle, out));
     }
 
     /**
@@ -393,13 +317,7 @@ public final class Backend implements AutoCloseable {
      * @return sample rate in Hz (e.g. 44100)
      */
     public int getSampleRate() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outSampleRate = arena.allocate(ValueLayout.JAVA_LONG);
-            int res = prism_h.prism_backend_get_sample_rate(handle, outSampleRate);
-            PrismException.throwIfError(res);
-            return (int) outSampleRate.get(ValueLayout.JAVA_LONG, 0);
-        }
+        return (int) queryLong(out -> prism_h.prism_backend_get_sample_rate(handle, out));
     }
 
     /**
@@ -408,20 +326,14 @@ public final class Backend implements AutoCloseable {
      * @return bit depth (e.g. 16, 32)
      */
     public int getBitDepth() {
-        checkClosed();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment outBitDepth = arena.allocate(ValueLayout.JAVA_LONG);
-            int res = prism_h.prism_backend_get_bit_depth(handle, outBitDepth);
-            PrismException.throwIfError(res);
-            return (int) outBitDepth.get(ValueLayout.JAVA_LONG, 0);
-        }
+        return (int) queryLong(out -> prism_h.prism_backend_get_bit_depth(handle, out));
     }
 
     @Override
     public void close() {
-        if (!closed) {
-            closed = true;
-            if (owned && handle != null && !handle.equals(MemorySegment.NULL)) {
+        synchronized (lock) {
+            if (!closed) {
+                closed = true;
                 prism_h.prism_backend_free(handle);
             }
         }
@@ -431,13 +343,62 @@ public final class Backend implements AutoCloseable {
         return closed;
     }
 
+    private <T> T locked(Supplier<T> action) {
+        synchronized (lock) {
+            checkClosed();
+            return action.get();
+        }
+    }
+
+    private void call(IntSupplier nativeCall) {
+        synchronized (lock) {
+            checkClosed();
+            PrismException.throwIfError(nativeCall.getAsInt());
+        }
+    }
+
+    private void callWithText(String text, TextCall nativeCall) {
+        validateText(text);
+        call(() -> {
+            try (Arena arena = Arena.ofConfined()) {
+                return nativeCall.invoke(arena, arena.allocateFrom(text));
+            }
+        });
+    }
+
+    private <T> T query(ValueLayout layout, OutCall nativeCall, Function<MemorySegment, T> read) {
+        return locked(() -> {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment out = arena.allocate(layout);
+                PrismException.throwIfError(nativeCall.invoke(out));
+                return read.apply(out);
+            }
+        });
+    }
+
+    private float queryFloat(OutCall nativeCall) {
+        return query(JAVA_FLOAT, nativeCall, out -> out.get(JAVA_FLOAT, 0));
+    }
+
+    private long queryLong(OutCall nativeCall) {
+        return query(JAVA_LONG, nativeCall, out -> out.get(JAVA_LONG, 0));
+    }
+
+    private boolean queryBoolean(OutCall nativeCall) {
+        return query(JAVA_BOOLEAN, nativeCall, out -> out.get(JAVA_BOOLEAN, 0));
+    }
+
+    private String queryString(OutCall nativeCall) {
+        return query(ADDRESS, nativeCall, out -> readCString(out.get(ADDRESS, 0)));
+    }
+
     private void checkClosed() {
         if (closed) {
             throw new IllegalStateException("Backend is already closed");
         }
     }
 
-    private void validateText(String text) {
+    private static void validateText(String text) {
         if (text == null || text.isEmpty()) {
             throw new PrismException.InvalidParam("Text must not be null or empty");
         }
@@ -447,7 +408,7 @@ public final class Backend implements AutoCloseable {
     }
 
     static String readCString(MemorySegment ptr) {
-        if (ptr == null || ptr.equals(MemorySegment.NULL) || ptr.address() == 0) {
+        if (ptr.address() == 0) {
             return "";
         }
         return ptr.reinterpret(Long.MAX_VALUE).getString(0);
