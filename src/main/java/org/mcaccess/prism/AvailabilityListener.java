@@ -1,16 +1,15 @@
 package org.mcaccess.prism;
 
 /**
- * Listener invoked when a backend's availability changes at runtime.
+ * Notified when a backend's runtime availability changes.
+ * A call is a notification that the application's cached choice of backend may be stale. It does not change any backend instance the application already holds
  */
 @FunctionalInterface
 public interface AvailabilityListener {
     /**
-     * Called when a backend availability status changes.
-     *
-     * @param backend   the backend ID (or {@link BackendId#INVALID} if custom/unknown)
-     * @param name      the backend name
-     * @param available {@code true} if the backend is currently available, {@code false} otherwise
+     * @param backend   The identifier of the backend whose availability changed.
+     * @param name      The backend name, for example "SAPI", "NVDA" or "OneCore".
+     * @param available True if the backend became available, false if it became unavailable.
      */
     void onAvailabilityChanged(BackendId backend, String name, boolean available);
 }

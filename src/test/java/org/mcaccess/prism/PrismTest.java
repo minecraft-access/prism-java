@@ -52,22 +52,21 @@ class PrismTest {
                 BackendId id = ctx.getIdOf(i);
                 try (Backend backend = ctx.create(id)) {
                     assertThat(backend.getName()).isNotBlank();
-                    BackendFeatures features = backend.getFeatures();
-                    assertThat(features).isNotNull();
-
-                    if (features.supportsGetVolume()) {
+                    long features = backend.getFeatures();
+                    
+                    if (BackendFeature.SUPPORTS_GET_VOLUME.isSupportedBy(features)) {
                         float volume = backend.getVolume();
                         assertThat(volume).isBetween(0.0f, 1.0f);
                     }
 
-                    if (features.supportsCountVoices()) {
+                    if (BackendFeature.SUPPORTS_COUNT_VOICES.isSupportedBy(features)) {
                         int voicesCount = backend.getVoicesCount();
                         assertThat(voicesCount).isGreaterThanOrEqualTo(0);
-                        if (voicesCount > 0 && features.supportsGetVoiceName()) {
+                        if (voicesCount > 0 && BackendFeature.SUPPORTS_GET_VOICE_NAME.isSupportedBy(features)) {
                             String voiceName = backend.getVoiceName(0);
                             assertThat(voiceName).isNotNull();
                         }
-                        if (voicesCount > 0 && features.supportsGetVoiceLanguage()) {
+                        if (voicesCount > 0 && BackendFeature.SUPPORTS_GET_VOICE_LANGUAGE.isSupportedBy(features)) {
                             String voiceLang = backend.getVoiceLanguage(0);
                             assertThat(voiceLang).isNotNull();
                         }
@@ -94,8 +93,8 @@ class PrismTest {
             for (int i = 0; i < ctx.getBackendsCount(); i++) {
                 BackendId id = ctx.getIdOf(i);
                 try (Backend backend = ctx.create(id)) {
-                    BackendFeatures features = backend.getFeatures();
-                    if (features.supportsSpeakToMemory()) {
+                    long features = backend.getFeatures();
+                    if (BackendFeature.SUPPORTS_SPEAK_TO_MEMORY.isSupportedBy(features)) {
                         AtomicBoolean received = new AtomicBoolean(false);
                         AtomicInteger totalSamples = new AtomicInteger(0);
 
