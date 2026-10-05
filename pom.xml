@@ -7,7 +7,7 @@
 
     <groupId>org.mcaccess</groupId>
     <artifactId>prism</artifactId>
-    <version>0.17.3</version>
+    <version>0.18.3</version>
 
     <name>PRISM</name>
     <description>Java bindings for PRISM.</description>
@@ -113,7 +113,7 @@
                         <configuration>
                             <url>https://github.com/ethindp/prism/releases/download/v${project.version}/prism-sdk-v${project.version}.zip</url>
                             <unpack>true</unpack>
-                            <sha256>6273c126fc35a300b2d76685383d8556fc9c822a0b26682558c32ce28f914364</sha256>
+                            <sha256>30120ffc55721032c4841454345826bfa9bf67e14c18ff6119bb35923e0d249d</sha256>
                         </configuration>
                     </execution>
                 </executions>
@@ -185,6 +185,8 @@
                             <executable>jextract</executable>
                             <arguments>
                                 <argument>@${project.basedir}/jextract.args</argument>
+                                <argument>-I</argument>
+                                <argument>${prism}/include</argument>
                                 <argument>--header-class-name</argument>
                                 <argument>prism_h</argument>
                                 <argument>--output</argument>

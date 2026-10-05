@@ -134,4 +134,43 @@ class PrismTest {
             }
         }
     }
+
+    @Test
+    void testVersion() {
+        assertThat(Prism.getVersion()).isGreaterThan(0);
+        assertThat(Prism.getVersionString()).isEqualTo("0.18.3");
+
+        assertThat(Prism.getCompileVersionMajor()).isEqualTo(0);
+        assertThat(Prism.getCompileVersionMinor()).isEqualTo(18);
+        assertThat(Prism.getCompileVersionPatch()).isEqualTo(3);
+        assertThat(Prism.getCompileVersionString()).isEqualTo("0.18.3");
+    }
+
+    @Test
+    void testAvailabilityAutoPower() {
+        // Just verify it can be queried without throwing
+        boolean supported = Prism.isAvailabilityAutoPowerSupported();
+        assertThat(supported).isIn(true, false);
+    }
+
+    @Test
+    void testContextBuilderAndAvailability() {
+        AtomicBoolean baselineCalled = new AtomicBoolean(false);
+        AtomicInteger availabilityEvents = new AtomicInteger(0);
+
+        try (Context ctx = Prism.createContext(builder -> builder
+                .withPollIntervalMs(250)
+                .withDebounceSamples(2)
+                .withBackoffMaxMs(1000)
+                .withAutoPowerManage(false)
+                .withAvailabilityListener((backend, name, available) -> availabilityEvents.incrementAndGet())
+                .withBaselineCallback(() -> baselineCalled.set(true)))) {
+
+            assertThat(ctx.isClosed()).isFalse();
+
+            // Verify polling pause and resume can be called
+            ctx.pauseAvailabilityPolling();
+            ctx.resumeAvailabilityPolling();
+        }
+    }
 }

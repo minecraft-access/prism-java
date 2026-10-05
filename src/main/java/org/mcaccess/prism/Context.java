@@ -1,6 +1,9 @@
 package org.mcaccess.prism;
 
 import org.mcaccess.prism.natives.NativeLoader;
+import org.mcaccess.prism.natives.PrismAvailabilityBaselineCallback;
+import org.mcaccess.prism.natives.PrismAvailabilityCallback;
+import org.mcaccess.prism.natives.PrismConfig;
 import org.mcaccess.prism.natives.prism_h;
 
 import java.lang.foreign.Arena;
@@ -44,6 +47,33 @@ public final class Context implements AutoCloseable {
         NativeLoader.load();
         this.arena = Arena.ofShared();
         MemorySegment configSeg = prism_h.prism_config_init(arena);
+
+        if (builder.availabilityListener != null) {
+            PrismAvailabilityCallback.Function cb = (userdata, backendId, nameSeg, available) -> {
+                String name = Backend.readCString(nameSeg);
+                BackendId id = BackendId.fromId(backendId).orElse(BackendId.INVALID);
+                builder.availabilityListener.onAvailabilityChanged(id, name, available);
+            };
+            MemorySegment stub = PrismAvailabilityCallback.allocate(cb, arena);
+            PrismConfig.availability_callback(configSeg, stub);
+        }
+        if (builder.pollIntervalMs != null) {
+            PrismConfig.availability_poll_interval_ms(configSeg, builder.pollIntervalMs);
+        }
+        if (builder.debounceSamples != null) {
+            PrismConfig.availability_debounce_samples(configSeg, builder.debounceSamples);
+        }
+        if (builder.backoffMaxMs != null) {
+            PrismConfig.availability_backoff_max_ms(configSeg, builder.backoffMaxMs);
+        }
+        if (builder.autoPowerManage != null) {
+            PrismConfig.availability_auto_power_manage(configSeg, builder.autoPowerManage);
+        }
+        if (builder.baselineCallback != null) {
+            PrismAvailabilityBaselineCallback.Function bcb = (userdata) -> builder.baselineCallback.run();
+            MemorySegment bStub = PrismAvailabilityBaselineCallback.allocate(bcb, arena);
+            PrismConfig.availability_baseline_callback(configSeg, bStub);
+        }
 
         this.handle = prism_h.prism_init(configSeg);
         if (this.handle == null || this.handle.equals(MemorySegment.NULL)) {
@@ -285,6 +315,22 @@ public final class Context implements AutoCloseable {
         return closed;
     }
 
+    /**
+     * Pauses background availability polling for this context.
+     */
+    public void pauseAvailabilityPolling() {
+        checkClosed();
+        prism_h.prism_availability_poll_pause(handle);
+    }
+
+    /**
+     * Resumes background availability polling for this context.
+     */
+    public void resumeAvailabilityPolling() {
+        checkClosed();
+        prism_h.prism_availability_poll_resume(handle);
+    }
+
     private void checkClosed() {
         if (closed) {
             throw new IllegalStateException("Context is already closed");
@@ -295,6 +341,79 @@ public final class Context implements AutoCloseable {
      * Builder for configuring and creating a {@link Context}.
      */
     public static final class Builder {
+        private AvailabilityListener availabilityListener;
+        private Integer pollIntervalMs;
+        private Integer debounceSamples;
+        private Integer backoffMaxMs;
+        private Boolean autoPowerManage;
+        private Runnable baselineCallback;
+
+        /**
+         * Sets an availability listener to receive callbacks when backend availability changes.
+         *
+         * @param listener the availability listener
+         * @return this builder
+         */
+        public Builder withAvailabilityListener(AvailabilityListener listener) {
+            this.availabilityListener = listener;
+            return this;
+        }
+
+        /**
+         * Sets the backend availability polling interval in milliseconds.
+         *
+         * @param pollIntervalMs polling interval in milliseconds
+         * @return this builder
+         */
+        public Builder withPollIntervalMs(int pollIntervalMs) {
+            this.pollIntervalMs = pollIntervalMs;
+            return this;
+        }
+
+        /**
+         * Sets the number of debounce samples for backend availability checks.
+         *
+         * @param debounceSamples number of samples
+         * @return this builder
+         */
+        public Builder withDebounceSamples(int debounceSamples) {
+            this.debounceSamples = debounceSamples;
+            return this;
+        }
+
+        /**
+         * Sets the maximum backoff interval in milliseconds for availability polling.
+         *
+         * @param backoffMaxMs maximum backoff in milliseconds
+         * @return this builder
+         */
+        public Builder withBackoffMaxMs(int backoffMaxMs) {
+            this.backoffMaxMs = backoffMaxMs;
+            return this;
+        }
+
+        /**
+         * Enables or disables automatic power management for availability polling.
+         *
+         * @param autoPowerManage {@code true} to enable auto power management
+         * @return this builder
+         */
+        public Builder withAutoPowerManage(boolean autoPowerManage) {
+            this.autoPowerManage = autoPowerManage;
+            return this;
+        }
+
+        /**
+         * Sets a callback invoked when the initial availability baseline has completed.
+         *
+         * @param callback baseline completion callback
+         * @return this builder
+         */
+        public Builder withBaselineCallback(Runnable callback) {
+            this.baselineCallback = callback;
+            return this;
+        }
+
         public Context build() {
             return new Context(this);
         }

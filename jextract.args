@@ -81,9 +81,10 @@
 --include-constant PRISM_LOG_LEVEL_ERROR
 --include-constant PRISM_LOG_LEVEL_NONE
 --include-constant PRISM_PLUGIN_ABI_VERSION
---include-struct PrismBackend
---include-struct PrismContext
---include-struct PrismConfig
+--include-constant PRISM_VERSION_MAJOR
+--include-constant PRISM_VERSION_MINOR
+--include-constant PRISM_VERSION_PATCH
+--include-constant PRISM_VERSION_STRING
 --include-struct PrismBackendVTable
 --include-struct PrismLogHandler
 --include-struct PrismPluginServices
@@ -92,6 +93,7 @@
 --include-struct PrismPluginBackend
 --include-typedef PrismAudioCallback
 --include-typedef PrismAvailabilityCallback
+--include-typedef PrismAvailabilityBaselineCallback
 --include-typedef PrismLogCallback
 --include-typedef PrismPluginQueryFn
 --include-typedef PrismBackendId
