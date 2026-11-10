@@ -10,6 +10,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.function.Consumer;
 
 /**
@@ -45,43 +46,70 @@ public final class Context implements AutoCloseable {
 
     private Context(Builder builder) {
         NativeLoader.load();
+        if (builder.availabilityListener == null) {
+            this.arena = null;
+            this.handle = prism_h.prism_init(MemorySegment.NULL);
+            if (Backend.isNull(this.handle)) {
+                throw new PrismException.NotInitialized("PRISM could not be initialized");
+            }
+            return;
+        }
+
         this.arena = Arena.ofShared();
-        MemorySegment configSeg = prism_h.prism_config_init(arena);
+        try (Arena configArena = Arena.ofConfined()) {
+            MemorySegment configSeg = prism_h.prism_config_init(configArena);
 
-        if (builder.availabilityListener != null) {
+            AvailabilityListener listener = builder.availabilityListener;
             PrismAvailabilityCallback.Function cb = (userdata, backendId, nameSeg, available) -> {
-                String name = Backend.readCString(nameSeg);
-                BackendId id = BackendId.fromId(backendId).orElse(BackendId.INVALID);
-                builder.availabilityListener.onAvailabilityChanged(id, name, available);
+                try {
+                    String name = Backend.readCString(nameSeg);
+                    BackendId id = BackendId.fromId(backendId).orElse(BackendId.INVALID);
+                    listener.onAvailabilityChanged(id, name, available);
+                } catch (Throwable ignored) {
+                    // Never allow exceptions to escape an FFM upcall stub into native polling thread
+                }
             };
-            MemorySegment stub = PrismAvailabilityCallback.allocate(cb, arena);
+            MemorySegment stub = PrismAvailabilityCallback.allocate(cb, this.arena);
             PrismConfig.availability_callback(configSeg, stub);
-        }
-        if (builder.pollIntervalMs != null) {
-            PrismConfig.availability_poll_interval_ms(configSeg, builder.pollIntervalMs);
-        }
-        if (builder.debounceSamples != null) {
-            PrismConfig.availability_debounce_samples(configSeg, builder.debounceSamples);
-        }
-        if (builder.backoffMaxMs != null) {
-            PrismConfig.availability_backoff_max_ms(configSeg, builder.backoffMaxMs);
-        }
-        if (builder.autoPowerManage != null) {
-            PrismConfig.availability_auto_power_manage(configSeg, builder.autoPowerManage);
-        }
-        if (builder.baselineCallback != null) {
-            PrismAvailabilityBaselineCallback.Function bcb = (userdata) -> builder.baselineCallback.run();
-            MemorySegment bStub = PrismAvailabilityBaselineCallback.allocate(bcb, arena);
-            PrismConfig.availability_baseline_callback(configSeg, bStub);
-        }
 
-        this.handle = prism_h.prism_init(configSeg);
-        if (this.handle == null || this.handle.equals(MemorySegment.NULL)) {
-            arena.close();
-            throw new PrismException.NotInitialized("PRISM could not be initialized");
+            if (builder.pollIntervalMs != null) {
+                PrismConfig.availability_poll_interval_ms(configSeg, builder.pollIntervalMs);
+            }
+            if (builder.debounceSamples != null) {
+                PrismConfig.availability_debounce_samples(configSeg, builder.debounceSamples);
+            }
+            if (builder.backoffMaxMs != null) {
+                PrismConfig.availability_backoff_max_ms(configSeg, builder.backoffMaxMs);
+            }
+            if (builder.autoPowerManage != null) {
+                PrismConfig.availability_auto_power_manage(configSeg, builder.autoPowerManage);
+            }
+            if (builder.baselineCallback != null) {
+                Runnable baseline = builder.baselineCallback;
+                PrismAvailabilityBaselineCallback.Function bcb = (userdata) -> {
+                    try {
+                        baseline.run();
+                    } catch (Throwable ignored) {
+                        // Never allow exceptions to escape an FFM upcall stub into native polling thread
+                    }
+                };
+                MemorySegment bStub = PrismAvailabilityBaselineCallback.allocate(bcb, this.arena);
+                PrismConfig.availability_baseline_callback(configSeg, bStub);
+            }
+
+            this.handle = prism_h.prism_init(configSeg);
+            if (Backend.isNull(this.handle)) {
+                this.arena.close();
+                throw new PrismException.NotInitialized("PRISM could not be initialized");
+            }
         }
     }
 
+    /**
+     * Creates a new {@link Builder} for configuring a {@link Context}.
+     *
+     * @return new context builder
+     */
     public static Builder builder() {
         return new Builder();
     }
@@ -113,12 +141,25 @@ public final class Context implements AutoCloseable {
      * @return backend ID
      */
     public BackendId getIdOf(int index) {
+        return BackendId.fromId(getRawIdOf(index)).orElse(BackendId.INVALID);
+    }
+
+    /**
+     * Gets the raw 64-bit backend ID for the backend at the specified index.
+     *
+     * @param index 0-based index in the backend registry
+     * @return 64-bit backend ID
+     */
+    public long getRawIdOf(int index) {
         checkClosed();
+        if (index < 0) {
+            throw new IndexOutOfBoundsException("Invalid backend index: " + index);
+        }
         long id = prism_h.prism_registry_id_at(handle, index);
         if (id == 0) {
             throw new IndexOutOfBoundsException("Invalid backend index: " + index);
         }
-        return BackendId.fromId(id).orElse(BackendId.INVALID);
+        return id;
     }
 
     /**
@@ -138,15 +179,32 @@ public final class Context implements AutoCloseable {
      * @return optional containing the backend ID if found
      */
     public Optional<BackendId> findIdOf(String name) {
+        OptionalLong rawId = findRawIdOf(name);
+        if (rawId.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(BackendId.fromId(rawId.getAsLong()).orElse(BackendId.INVALID));
+    }
+
+    /**
+     * Finds the raw 64-bit backend ID for the backend with the given name.
+     *
+     * @param name backend name
+     * @return optional containing the 64-bit backend ID if found
+     */
+    public OptionalLong findRawIdOf(String name) {
         checkClosed();
         Objects.requireNonNull(name, "name must not be null");
+        if (name.isEmpty() || name.indexOf('\0') >= 0) {
+            return OptionalLong.empty();
+        }
         try (Arena localArena = Arena.ofConfined()) {
             MemorySegment nameSeg = localArena.allocateFrom(name);
             long id = prism_h.prism_registry_id(handle, nameSeg);
             if (id == 0) {
-                return Optional.empty();
+                return OptionalLong.empty();
             }
-            return Optional.of(BackendId.fromId(id).orElse(BackendId.INVALID));
+            return OptionalLong.of(id);
         }
     }
 
@@ -170,7 +228,7 @@ public final class Context implements AutoCloseable {
     public String getNameOf(long id) {
         checkClosed();
         MemorySegment ptr = prism_h.prism_registry_name(handle, id);
-        if (ptr == null || ptr.equals(MemorySegment.NULL)) {
+        if (Backend.isNull(ptr)) {
             throw new IllegalArgumentException("Backend ID not found: 0x" + Long.toHexString(id));
         }
         return Backend.readCString(ptr);
@@ -221,6 +279,34 @@ public final class Context implements AutoCloseable {
     }
 
     /**
+     * Retrieves an existing shared backend instance if one is currently alive in the registry.
+     * Unlike {@link #acquire(BackendId)}, this does not instantiate a new backend if none is currently active.
+     *
+     * @param id backend ID
+     * @return optional containing the active shared Backend instance if present
+     */
+    public Optional<Backend> get(BackendId id) {
+        Objects.requireNonNull(id, "id must not be null");
+        return get(id.getId());
+    }
+
+    /**
+     * Retrieves an existing shared backend instance by 64-bit ID if one is currently alive in the registry.
+     * Unlike {@link #acquire(long)}, this does not instantiate a new backend if none is currently active.
+     *
+     * @param id 64-bit backend ID
+     * @return optional containing the active shared Backend instance if present
+     */
+    public Optional<Backend> get(long id) {
+        checkClosed();
+        MemorySegment ptr = prism_h.prism_registry_get(handle, id);
+        if (Backend.isNull(ptr)) {
+            return Optional.empty();
+        }
+        return Optional.of(new Backend(ptr, true));
+    }
+
+    /**
      * Creates a new owned instance of the backend with the specified ID.
      *
      * @param id backend ID
@@ -240,10 +326,10 @@ public final class Context implements AutoCloseable {
     public Backend create(long id) {
         checkClosed();
         MemorySegment ptr = prism_h.prism_registry_create(handle, id);
-        if (ptr == null || ptr.equals(MemorySegment.NULL)) {
+        if (Backend.isNull(ptr)) {
             throw new PrismException.InvalidParam("Invalid or unsupported backend: 0x" + Long.toHexString(id));
         }
-        return new Backend(ptr, true);
+        return new Backend(ptr, false);
     }
 
     /**
@@ -254,7 +340,7 @@ public final class Context implements AutoCloseable {
     public Backend createBest() {
         checkClosed();
         MemorySegment ptr = prism_h.prism_registry_create_best(handle);
-        if (ptr == null || ptr.equals(MemorySegment.NULL)) {
+        if (Backend.isNull(ptr)) {
             throw new PrismException.BackendNotAvailable("No suitable PRISM backend available on this system");
         }
         return new Backend(ptr, true);
@@ -280,7 +366,7 @@ public final class Context implements AutoCloseable {
     public Backend acquire(long id) {
         checkClosed();
         MemorySegment ptr = prism_h.prism_registry_acquire(handle, id);
-        if (ptr == null || ptr.equals(MemorySegment.NULL)) {
+        if (Backend.isNull(ptr)) {
             throw new PrismException.InvalidParam("Invalid or unsupported backend: 0x" + Long.toHexString(id));
         }
         return new Backend(ptr, false);
@@ -294,23 +380,34 @@ public final class Context implements AutoCloseable {
     public Backend acquireBest() {
         checkClosed();
         MemorySegment ptr = prism_h.prism_registry_acquire_best(handle);
-        if (ptr == null || ptr.equals(MemorySegment.NULL)) {
+        if (Backend.isNull(ptr)) {
             throw new PrismException.BackendNotAvailable("No suitable PRISM backend available on this system");
         }
-        return new Backend(ptr, false);
+        return new Backend(ptr, true);
     }
 
     @Override
     public void close() {
         if (!closed) {
-            closed = true;
-            if (handle != null && !handle.equals(MemorySegment.NULL)) {
-                prism_h.prism_shutdown(handle);
+            synchronized (this) {
+                if (!closed) {
+                    closed = true;
+                    if (!Backend.isNull(handle)) {
+                        prism_h.prism_shutdown(handle);
+                    }
+                    if (arena != null) {
+                        arena.close();
+                    }
+                }
             }
-            arena.close();
         }
     }
 
+    /**
+     * Checks whether this context has been closed.
+     *
+     * @return {@code true} if closed, {@code false} otherwise
+     */
     public boolean isClosed() {
         return closed;
     }
@@ -349,6 +446,12 @@ public final class Context implements AutoCloseable {
         private Runnable baselineCallback;
 
         /**
+         * Creates a new context builder with default settings.
+         */
+        public Builder() {
+        }
+
+        /**
          * Sets an availability listener to receive callbacks when backend availability changes.
          *
          * @param listener the availability listener
@@ -362,10 +465,13 @@ public final class Context implements AutoCloseable {
         /**
          * Sets the backend availability polling interval in milliseconds.
          *
-         * @param pollIntervalMs polling interval in milliseconds
+         * @param pollIntervalMs non-negative polling interval in milliseconds
          * @return this builder
          */
         public Builder withPollIntervalMs(int pollIntervalMs) {
+            if (pollIntervalMs < 0) {
+                throw new IllegalArgumentException("pollIntervalMs must be non-negative: " + pollIntervalMs);
+            }
             this.pollIntervalMs = pollIntervalMs;
             return this;
         }
@@ -373,10 +479,13 @@ public final class Context implements AutoCloseable {
         /**
          * Sets the number of debounce samples for backend availability checks.
          *
-         * @param debounceSamples number of samples
+         * @param debounceSamples non-negative number of samples
          * @return this builder
          */
         public Builder withDebounceSamples(int debounceSamples) {
+            if (debounceSamples < 0) {
+                throw new IllegalArgumentException("debounceSamples must be non-negative: " + debounceSamples);
+            }
             this.debounceSamples = debounceSamples;
             return this;
         }
@@ -384,10 +493,13 @@ public final class Context implements AutoCloseable {
         /**
          * Sets the maximum backoff interval in milliseconds for availability polling.
          *
-         * @param backoffMaxMs maximum backoff in milliseconds
+         * @param backoffMaxMs non-negative maximum backoff in milliseconds
          * @return this builder
          */
         public Builder withBackoffMaxMs(int backoffMaxMs) {
+            if (backoffMaxMs < 0) {
+                throw new IllegalArgumentException("backoffMaxMs must be non-negative: " + backoffMaxMs);
+            }
             this.backoffMaxMs = backoffMaxMs;
             return this;
         }
@@ -414,6 +526,11 @@ public final class Context implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Builds and initializes the configured {@link Context}.
+         *
+         * @return newly initialized PRISM context
+         */
         public Context build() {
             return new Context(this);
         }

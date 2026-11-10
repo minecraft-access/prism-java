@@ -2,7 +2,6 @@ package org.mcaccess.prism.natives;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -79,9 +78,7 @@ public final class NativeLoader {
     }
 
     private static void loadWindows(String arch) throws IOException {
-        Path tempDir = getTempDir();
-        String resourceDir = "/natives/windows/" + arch + "/";
-        Path prismPath = extractResource(resourceDir + "prism.dll", tempDir.resolve("prism.dll"));
+        Path prismPath = extractResource("/natives/windows/" + arch + "/prism.dll", "prism.dll");
         if (prismPath != null) {
             System.load(prismPath.toAbsolutePath().toString());
         } else {
@@ -90,9 +87,7 @@ public final class NativeLoader {
     }
 
     private static void loadLinux(String arch) throws IOException {
-        Path tempDir = getTempDir();
-        String resourceDir = "/natives/linux/" + arch + "/";
-        Path prismPath = extractResource(resourceDir + "libprism.so", tempDir.resolve("libprism.so"));
+        Path prismPath = extractResource("/natives/linux/" + arch + "/libprism.so", "libprism.so");
         if (prismPath != null) {
             System.load(prismPath.toAbsolutePath().toString());
         } else {
@@ -101,8 +96,7 @@ public final class NativeLoader {
     }
 
     private static void loadMac() throws IOException {
-        Path tempDir = getTempDir();
-        Path prismPath = extractResource("/natives/mac/libprism.dylib", tempDir.resolve("libprism.dylib"));
+        Path prismPath = extractResource("/natives/mac/libprism.dylib", "libprism.dylib");
         if (prismPath != null) {
             System.load(prismPath.toAbsolutePath().toString());
         } else {
@@ -110,19 +104,17 @@ public final class NativeLoader {
         }
     }
 
-    private static Path extractResource(String resourcePath, Path target) throws IOException {
+    private static Path extractResource(String resourcePath, String fileName) throws IOException {
         try (InputStream in = NativeLoader.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
                 return null;
             }
+            Path tempDir = Files.createTempDirectory("prism_native_");
+            tempDir.toFile().deleteOnExit();
+            Path target = tempDir.resolve(fileName);
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+            target.toFile().deleteOnExit();
             return target;
         }
-    }
-
-    private static Path getTempDir() throws IOException {
-        Path tempDir = Files.createTempDirectory("prism_native_");
-        tempDir.toFile().deleteOnExit();
-        return tempDir;
     }
 }

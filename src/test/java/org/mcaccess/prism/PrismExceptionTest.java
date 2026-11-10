@@ -60,6 +60,8 @@ class PrismExceptionTest {
         assertThatThrownBy(() -> PrismException.throwIfError(22))
                 .isInstanceOf(PrismException.LibraryInvalid.class);
         assertThatThrownBy(() -> PrismException.throwIfError(23))
-                .isInstanceOf(PrismException.IncompatibleAbi.class);
+                .isInstanceOf(PrismException.IncompatibleAbi.class)
+                .extracting(ex -> ((PrismException) ex).getCode())
+                .isEqualTo(23);
     }
 }

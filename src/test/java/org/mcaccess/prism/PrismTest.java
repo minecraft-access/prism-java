@@ -173,4 +173,108 @@ class PrismTest {
             ctx.resumeAvailabilityPolling();
         }
     }
+
+    @Test
+    void testAcquireGetAndReferenceCountRelease() {
+        try (Context ctx = Prism.createContext()) {
+            assertThatThrownBy(() -> ctx.getIdOf(-1))
+                    .isInstanceOf(IndexOutOfBoundsException.class);
+            assertThatThrownBy(() -> ctx.getRawIdOf(-1))
+                    .isInstanceOf(IndexOutOfBoundsException.class);
+            assertThat(ctx.findRawIdOf("nonexistent\0backend")).isEmpty();
+
+            for (int i = 0; i < ctx.getBackendsCount(); i++) {
+                BackendId id = ctx.getIdOf(i);
+                long rawId = ctx.getRawIdOf(i);
+                assertThat(rawId).isEqualTo(id.getId());
+                String name = ctx.getNameOf(id);
+                assertThat(ctx.findRawIdOf(name)).hasValue(rawId);
+
+                try {
+                    assertThat(ctx.get(id)).isEmpty();
+                    try (Backend acquired = ctx.acquire(id)) {
+                        assertThat(acquired.getName()).isEqualTo(name);
+                        try (Backend cached = ctx.get(id).orElseThrow()) {
+                            assertThat(cached.getName()).isEqualTo(name);
+                        }
+                        // Shared instance should still be alive until 'acquired' is closed
+                        assertThat(ctx.get(id)).isPresent().get().satisfies(Backend::close);
+                    }
+                    // Once all acquired/get handles are closed, cached shared instance must be released
+                    assertThat(ctx.get(id)).isEmpty();
+                    break;
+                } catch (PrismException.BackendNotAvailable ignored) {
+                    // Backend not active on this system
+                }
+            }
+        }
+    }
+
+    @Test
+    void testParameterValidationAndCallbackExceptionSafety() {
+        try (Context ctx = Prism.createContext()) {
+            for (int i = 0; i < ctx.getBackendsCount(); i++) {
+                BackendId id = ctx.getIdOf(i);
+                try (Backend backend = ctx.create(id)) {
+                    assertThatThrownBy(() -> backend.setVolume(-0.1f))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setVolume(1.1f))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setVolume(Float.NaN))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+
+                    assertThatThrownBy(() -> backend.setRate(-0.1f))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setRate(1.1f))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setRate(Float.NaN))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+
+                    assertThatThrownBy(() -> backend.setPitch(-0.1f))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setPitch(1.1f))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setPitch(Float.NaN))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+
+                    assertThatThrownBy(() -> backend.getVoiceName(-1))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.getVoiceLanguage(-1))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+                    assertThatThrownBy(() -> backend.setVoice(-1))
+                            .isInstanceOf(PrismException.RangeOutOfBounds.class);
+
+                    if (backend.getFeatures().supportsSpeakToMemory()) {
+                        assertThatThrownBy(() -> backend.speakToMemory("Test exception", (samples, ch, sr) -> {
+                            throw new IllegalStateException("Expected callback failure");
+                        }))
+                                .isInstanceOf(IllegalStateException.class)
+                                .hasMessage("Expected callback failure");
+                    }
+                    break;
+                } catch (PrismException.BackendNotAvailable ignored) {
+                    // Continue searching for an active backend
+                }
+            }
+        }
+    }
+
+    @Test
+    void testLogging() {
+        AtomicBoolean logReceived = new AtomicBoolean(false);
+        LogLevel previousLevel = Prism.setLogLevel(LogLevel.DEBUG);
+        try {
+            Prism.setLogCallback((level, source, message) -> {
+                if ("java-test".equals(source) && "hello prism log".equals(message) && level == LogLevel.INFO) {
+                    logReceived.set(true);
+                }
+            });
+            Prism.log(LogLevel.INFO, "java-test", "hello prism log");
+            Prism.flushLog();
+            assertThat(logReceived.get()).isTrue();
+        } finally {
+            Prism.setLogCallback(null);
+            Prism.setLogLevel(previousLevel);
+        }
+    }
 }
